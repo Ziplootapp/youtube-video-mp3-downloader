@@ -2,6 +2,26 @@ import os
 import sys
 import uuid
 import threading
+import subprocess
+import webbrowser
+
+# Auto-install dependencies if missing on any machine automatically
+required_packages = {
+    'flask': 'flask',
+    'yt_dlp': 'yt-dlp',
+    'imageio_ffmpeg': 'imageio-ffmpeg'
+}
+
+for module_name, package_name in required_packages.items():
+    try:
+        __import__(module_name)
+    except ImportError:
+        print(f"[AUTO-SETUP] Package '{package_name}' not found. Installing automatically...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", f"{package_name}", "--pre"])
+        except Exception as e:
+            print(f"[WARNING] Could not auto-install {package_name}: {e}")
+
 from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 
@@ -63,37 +83,32 @@ def run_download_thread(task_id, url, format_option, title):
             else:
                 percent_str = d.get('_percent_str', '0%').strip()
                 
-            speed_str = d.get('_speed_str', 'N/A').strip()
-            eta_str = d.get('_eta_str', 'N/A').strip()
-            
             DOWNLOAD_PROGRESS[task_id].update({
                 "percent": percent_str,
-                "speed": speed_str,
-                "eta": eta_str
+                "speed": d.get('_speed_str', 'N/A').strip(),
+                "eta": d.get('_eta_str', 'N/A').strip()
             })
-            
         elif d['status'] == 'finished':
             DOWNLOAD_PROGRESS[task_id].update({
                 "percent": "100%",
                 "status": "processing"
             })
 
-    # yt-dlp configurations
+    # yt-dlp Options
     ydl_opts = {
         'progress_hooks': [progress_hook],
-        'ffmpeg_location': local_ffmpeg if os.path.exists(local_ffmpeg) else None,
+        'ffmpeg_location': ffmpeg_dir,
         'quiet': True,
         'no_warnings': True,
         'js_runtimes': {'node': {}},
         'noplaylist': True,
         'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'default']}},
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
     }
     
     if format_option == 'mp3':
-        # Download best audio and extract to MP3
         ydl_opts.update({
             'format': 'bestaudio/best',
             'outtmpl': os.path.join(OUTPUT_DIR, f"{clean_title}.%(ext)s"),
@@ -105,8 +120,6 @@ def run_download_thread(task_id, url, format_option, title):
         })
         final_filename = f"{clean_title}.mp3"
     else:
-        # Download best video (height match) + best audio, merge to MP4
-        # format_option can be 1080, 720, 480, 360
         ydl_opts.update({
             'format': f"bestvideo[height<={format_option}]+bestaudio/best",
             'outtmpl': os.path.join(OUTPUT_DIR, f"{clean_title}.%(ext)s"),
@@ -117,14 +130,11 @@ def run_download_thread(task_id, url, format_option, title):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-            
         DOWNLOAD_PROGRESS[task_id].update({
             "status": "completed",
-            "percent": "100%",
             "filename": final_filename
         })
     except Exception as e:
-        print(f"Download thread error: {e}")
         DOWNLOAD_PROGRESS[task_id].update({
             "status": "failed",
             "error": str(e)
@@ -134,16 +144,12 @@ def run_download_thread(task_id, url, format_option, title):
 def index():
     return send_from_directory(".", "index.html")
 
-@app.route("/downloads/<path:filename>")
-def serve_download(filename):
-    return send_from_directory(OUTPUT_DIR, filename)
-
-@app.route("/favicon.svg")
-def serve_favicon():
-    return send_from_directory(".", "favicon.svg")
+@app.route("/downloads/<filename>")
+def download_file(filename):
+    return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
 
 @app.route("/api/info", methods=["POST"])
-def get_video_info():
+def get_info():
     data = request.json or {}
     url = data.get("url", "").strip()
     
@@ -151,13 +157,13 @@ def get_video_info():
         return jsonify({"error": "No URL provided"}), 400
         
     ydl_opts = {
-        'extract_flat': False,
-        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
         'js_runtimes': {'node': {}},
         'noplaylist': True,
         'extractor_args': {'youtube': {'player_client': ['ios', 'web', 'default']}},
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
     }
     
@@ -165,23 +171,21 @@ def get_video_info():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Extract available resolutions
-            formats = info.get("formats", [])
-            heights = set()
-            for f in formats:
-                h = f.get("height")
-                if h and h in [360, 480, 720, 1080, 1440, 2160]:
-                    heights.add(h)
-            
-            resolutions = sorted(list(heights), reverse=True)
-            
+            formats_available = []
+            if 'formats' in info:
+                heights = set()
+                for f in info['formats']:
+                    h = f.get('height')
+                    if h and h not in heights:
+                        heights.add(h)
+                formats_available = sorted(list(heights), reverse=True)
+
             return jsonify({
-                "status": "success",
                 "title": info.get("title", "YouTube Video"),
-                "thumbnail": info.get("thumbnail") or info.get("thumbnails", [{}])[-1].get("url"),
+                "thumbnail": info.get("thumbnail", ""),
                 "duration": info.get("duration", 0),
-                "author": info.get("uploader", "Unknown Uploader"),
-                "resolutions": resolutions
+                "uploader": info.get("uploader", "Unknown"),
+                "formats": formats_available
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -198,7 +202,6 @@ def start_download():
         
     task_id = str(uuid.uuid4())[:8]
     
-    # Start background download thread
     thread = threading.Thread(
         target=run_download_thread,
         args=(task_id, url, format_option, title)
@@ -219,9 +222,13 @@ def get_progress(task_id):
         
     return jsonify(progress)
 
+def open_browser():
+    webbrowser.open("http://localhost:5000")
+
 if __name__ == "__main__":
     print("=======================================================")
     print("   ZipLoot Dedicated YouTube Video & MP3 Downloader")
     print("   Running on: http://localhost:5000")
     print("=======================================================")
+    threading.Timer(1.2, open_browser).start()
     app.run(host="0.0.0.0", port=5000, debug=False)
