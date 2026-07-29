@@ -532,9 +532,9 @@
         videoData = data;
         
         // Populate details
-        document.getElementById('videoThumb').src = data.thumbnail;
-        document.getElementById('videoTitle').textContent = data.title;
-        document.getElementById('videoAuthor').textContent = data.author;
+        document.getElementById('videoThumb').src = data.thumbnail || '';
+        document.getElementById('videoTitle').textContent = data.title || 'YouTube Video';
+        document.getElementById('videoAuthor').textContent = data.author || data.uploader || 'ZipLoot Channel';
         
         // Populate format selector
         const select = document.getElementById('formatSelect');
@@ -547,7 +547,8 @@
         select.appendChild(optMp3);
         
         // Video resolution format options
-        data.resolutions.forEach(res => {
+        const resolutionsList = data.resolutions || data.formats || [1080, 720, 480, 360];
+        resolutionsList.forEach(res => {
           const opt = document.createElement('option');
           opt.value = res.toString();
           opt.textContent = `MP4 Video - ${res}p (HD)`;
