@@ -184,8 +184,10 @@ def get_info():
                 "title": info.get("title", "YouTube Video"),
                 "thumbnail": info.get("thumbnail", ""),
                 "duration": info.get("duration", 0),
-                "uploader": info.get("uploader", "Unknown"),
-                "formats": formats_available
+                "uploader": info.get("uploader") or info.get("channel") or "ZipLoot Channel",
+                "author": info.get("uploader") or info.get("channel") or "ZipLoot Channel",
+                "formats": formats_available,
+                "resolutions": formats_available if formats_available else [1080, 720, 480, 360]
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
