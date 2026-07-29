@@ -5,15 +5,29 @@ import threading
 from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 
-# Resolve absolute FFmpeg location from workspace directory
-local_ffmpeg = r"C:\Users\user\AppData\Local\Programs\Python\Python312\Lib\site-packages\imageio_ffmpeg\binaries"
-# Fallback to local workspace ffmpeg
-if not os.path.exists(local_ffmpeg):
-    local_ffmpeg = r"C:\Users\user\.gemini\antigravity\scratch\ziploot\ffmpeg-shared\bin"
+# Dynamically resolve FFmpeg binary location across all platforms and users
+ffmpeg_dir = None
+try:
+    import imageio_ffmpeg
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    if ffmpeg_exe and os.path.exists(ffmpeg_exe):
+        ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+except Exception:
+    pass
 
-if os.path.exists(local_ffmpeg):
-    os.add_dll_directory(local_ffmpeg)
-    os.environ["PATH"] = local_ffmpeg + os.path.pathsep + os.environ.get("PATH", "")
+if not ffmpeg_dir:
+    for p in [r"C:\ffmpeg-shared\bin", r"C:\ffmpeg\bin"]:
+        if os.path.exists(p):
+            ffmpeg_dir = p
+            break
+
+if ffmpeg_dir and os.path.exists(ffmpeg_dir):
+    if hasattr(os, 'add_dll_directory'):
+        try:
+            os.add_dll_directory(ffmpeg_dir)
+        except Exception:
+            pass
+    os.environ["PATH"] = ffmpeg_dir + os.path.pathsep + os.environ.get("PATH", "")
 
 app = Flask(__name__, static_folder=".")
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
