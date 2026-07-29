@@ -26,12 +26,23 @@ from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 
 # Dynamically resolve FFmpeg binary location across all platforms and users
+ffmpeg_exe_path = None
 ffmpeg_dir = None
+
 try:
     import imageio_ffmpeg
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    if ffmpeg_exe and os.path.exists(ffmpeg_exe):
-        ffmpeg_dir = os.path.dirname(ffmpeg_exe)
+    import shutil
+    raw_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    if raw_exe and os.path.exists(raw_exe):
+        ffmpeg_dir = os.path.dirname(raw_exe)
+        target_name = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
+        target_path = os.path.join(ffmpeg_dir, target_name)
+        if not os.path.exists(target_path):
+            try:
+                shutil.copy2(raw_exe, target_path)
+            except Exception:
+                pass
+        ffmpeg_exe_path = target_path if os.path.exists(target_path) else raw_exe
 except Exception:
     pass
 
@@ -39,6 +50,9 @@ if not ffmpeg_dir:
     for p in [r"C:\ffmpeg-shared\bin", r"C:\ffmpeg\bin"]:
         if os.path.exists(p):
             ffmpeg_dir = p
+            t_exe = os.path.join(p, "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg")
+            if os.path.exists(t_exe):
+                ffmpeg_exe_path = t_exe
             break
 
 if ffmpeg_dir and os.path.exists(ffmpeg_dir):
@@ -97,7 +111,7 @@ def run_download_thread(task_id, url, format_option, title):
     # yt-dlp Options
     ydl_opts = {
         'progress_hooks': [progress_hook],
-        'ffmpeg_location': ffmpeg_dir,
+        'ffmpeg_location': ffmpeg_exe_path or ffmpeg_dir,
         'quiet': True,
         'no_warnings': True,
         'js_runtimes': {'node': {}},
